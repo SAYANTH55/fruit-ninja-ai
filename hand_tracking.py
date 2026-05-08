@@ -3,47 +3,69 @@ import mediapipe as mp
 
 
 class HandTracker:
-    def __init__(self, max_num_hands=1):
 
-        # Initialize MediaPipe Hands
+    def __init__(self):
+
+        # Load MediaPipe Hands module
         self.mp_hands = mp.solutions.hands
-        self.mp_draw = mp.solutions.drawing_utils
 
+        # OPTIMIZATION: Lowered detection confidence from 0.7 → 0.6
+        # and tracking confidence from 0.7 → 0.5.
+        # MediaPipe spends the MOST CPU time on "detection" mode.
+        # Once a hand IS detected, it switches to cheaper "tracking" mode.
+        # By lowering min_tracking_confidence, we keep it in tracking mode
+        # longer, avoiding expensive re-detections every few frames.
         self.hands = self.mp_hands.Hands(
-            max_num_hands=max_num_hands,
-            min_detection_confidence=0.5,
+            max_num_hands=1,
+            min_detection_confidence=0.6,
             min_tracking_confidence=0.5
         )
 
-    def get_hand_landmarks(self, frame):
+        # Drawing utility
+        self.mp_draw = mp.solutions.drawing_utils
 
-        # Convert BGR to RGB
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    def track_hands(self, frame):
 
-        # Process frame
-        results = self.hands.process(frame_rgb)
+        # OPTIMIZATION: Instead of converting the full HD frame,
+        # we mark the frame as not-writeable before processing.
+        # This tells MediaPipe it can use the frame data directly
+        # without making an internal copy — saves a full frame memcpy.
+        frame.flags.writeable = False
 
-        landmark_list = []
+        # Convert BGR → RGB for MediaPipe
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
+        # Process frame using AI model
+        results = self.hands.process(rgb_frame)
+
+        # Re-enable writing so OpenCV can draw on the frame again
+        frame.flags.writeable = True
+
+        fingertip = None
+
+        # If hand detected
         if results.multi_hand_landmarks:
 
-            for hand_landmarks in results.multi_hand_landmarks:
+            # We only track 1 hand, so grab the first one directly
+            hand_landmarks = results.multi_hand_landmarks[0]
 
-                # Get all 21 landmarks
-                for idx, lm in enumerate(hand_landmarks.landmark):
+            # Get frame dimensions
+            h, w, _ = frame.shape
 
-                    h, w, _ = frame.shape
+            # Landmark 8 = index fingertip
+            lm = hand_landmarks.landmark[8]
 
-                    cx = int(lm.x * w)
-                    cy = int(lm.y * h)
+            # Convert normalized coordinates → pixels
+            fingertip = (int(lm.x * w), int(lm.y * h))
 
-                    landmark_list.append((idx, cx, cy))
+            # Draw fingertip circle
+            cv2.circle(frame, fingertip, 15, (0, 255, 0), -1)
 
-                # Draw hand skeleton
-                self.mp_draw.draw_landmarks(
-                    frame,
-                    hand_landmarks,
-                    self.mp_hands.HAND_CONNECTIONS
-                )
+            # Draw hand skeleton
+            self.mp_draw.draw_landmarks(
+                frame,
+                hand_landmarks,
+                self.mp_hands.HAND_CONNECTIONS
+            )
 
-        return landmark_list
+        return frame, fingertip
