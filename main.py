@@ -1,9 +1,10 @@
 import cv2
 import math
 import time
+import os
 
 from hand_tracking import HandTracker
-from fruit import Fruit
+from fruit import Fruit, preprocess_image, overlay_png
 
 
 # Start webcam (request HD for immersive view)
@@ -22,6 +23,10 @@ tracker = HandTracker()
 # Store sword trail points
 trail_points = []
 
+# --- Trail Configuration ---
+TRAIL_LENGTH = 15  # Number of points to keep
+# ---------------------------
+
 # Store fruit objects
 fruits = []
 
@@ -30,6 +35,10 @@ frame_counter = 0
 
 # For FPS calculation
 pTime = 0
+
+# Set up fullscreen window for cinematic recording
+cv2.namedWindow("Fruit Ninja AI", cv2.WINDOW_NORMAL)
+cv2.setWindowProperty("Fruit Ninja AI", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
 # Main game loop
 while True:
@@ -63,12 +72,17 @@ while True:
         # Add fingertip position
         trail_points.append(fingertip)
 
-        # Keep only the newest N points for a short, responsive trail (N=10)
-        if len(trail_points) > 10:
+        # Keep only the newest N points for a short, responsive trail
+        if len(trail_points) > TRAIL_LENGTH:
             trail_points.pop(0)
+            
+    # Clear trail immediately when tracking is lost
+    else:
+        trail_points.clear()
 
     # Increase frame counter
     frame_counter += 1
+
 
     # Spawn new fruit every 40 frames
     if frame_counter % 40 == 0:
@@ -83,46 +97,36 @@ while True:
         # Update fruit movement
         fruit.update()
 
-        # Collision detection
+        # Calculate the true center of the fruit sprite and collision radius
+        # (Needed for both gameplay slicing and visual splash FX)
+        fruit_center_x = fruit.x + (fruit.size / 2)
+        fruit_center_y = fruit.y + (fruit.size / 2)
+        collision_radius = (fruit.size / 2) + 20
+
+        # --- 1. GAMEPLAY COLLISION (Slicing) ---
         if fingertip:
-
-            # Calculate the true center of the fruit sprite
-            fruit_center_x = fruit.x + (fruit.size / 2)
-            fruit_center_y = fruit.y + (fruit.size / 2)
-
             # Calculate Euclidean distance between finger and fruit center
             distance = math.sqrt(
                 (fingertip[0] - fruit_center_x) ** 2 +
                 (fingertip[1] - fruit_center_y) ** 2
             )
 
-            # Forgiving collision radius: slightly larger than the visual fruit
-            collision_radius = (fruit.size / 2) + 20
-
-            # Slice fruit if touched
+            # Slice fruit if fingertip touches it
             if distance < collision_radius and not fruit.sliced:
-
                 fruit.sliced = True
-                
-                # Calculate swipe velocity (distance between current and previous fingertip position)
-                swipe_velocity = 0
-                if len(trail_points) >= 2:
-                    current_pt = trail_points[-1]
-                    prev_pt = trail_points[-2]
-                    swipe_velocity = math.sqrt(
-                        (current_pt[0] - prev_pt[0]) ** 2 +
-                        (current_pt[1] - prev_pt[1]) ** 2
-                    )
 
-                # Threshold for a strong swipe (configurable)
-                SWIPE_THRESHOLD = 50
-
-                if swipe_velocity > SWIPE_THRESHOLD:
-                    # Strong swipe -> Trigger splash effect and stronger visual feedback
-                    fruit.splash_timer = fruit.max_splash_time
-                else:
-                    # Weak swipe -> Only slice the fruit, no splash effect
-                    fruit.splash_timer = 0
+        # --- 2. VFX COLLISION (Splash Effects) ---
+        # Trigger splash if ANY point of the glowing trail touches the fruit
+        for point in trail_points:
+            trail_distance = math.sqrt(
+                (point[0] - fruit_center_x) ** 2 +
+                (point[1] - fruit_center_y) ** 2
+            )
+            
+            if trail_distance < collision_radius:
+                # Trail contact triggers visual splash FX (doesn't slice)
+                fruit.splash_timer = fruit.max_splash_time
+                break
 
         # Draw fruit sprite
         fruit.draw(frame)
@@ -132,12 +136,26 @@ while True:
 
             fruits.remove(fruit)
 
-    # Draw sword trail (on top of all objects)
-    for i in range(1, len(trail_points)):
-        # Smooth thickness that tapers off older points
-        thickness = int(12 - (i / len(trail_points)) * 10)
-        thickness = max(thickness, 2)
-        cv2.line(frame, trail_points[i - 1], trail_points[i], (70, 70, 70), thickness)
+    # --- Procedural Glowing Trail ---
+    # We use "Layered Rendering" to fake a glow effect without shaders.
+    # We draw the same line multiple times with different thicknesses and colors.
+    if len(trail_points) >= 2:
+        for i in range(1, len(trail_points)):
+            pt1 = trail_points[i - 1]
+            pt2 = trail_points[i]
+            
+            # Create tapering factor based on trail position (tail = thinner, tip = thicker)
+            factor = i / len(trail_points)
+            
+            # Layer 1: Thick Outer Glow (Deep Neon Cyan)
+            cv2.line(frame, pt1, pt2, (255, 200, 0), max(1, int(22 * factor)))
+            
+            # Layer 2 : Medium glow for main energy blade body
+            cv2.line(frame, pt1, pt2, (255, 255, 100), max(1, int(10 * factor)))
+            
+            # Layer 3 : Thin white core for bright blade center
+            cv2.line(frame, pt1, pt2, (255, 255, 255), max(1, int(3 * factor)))
+    # --------------------------------
 
     # Calculate and Display FPS
     # FPS calculation (display after all drawing)

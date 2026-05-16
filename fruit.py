@@ -43,7 +43,7 @@ SPLASH_SIZE  = 320   # Splash sprite size in pixels
 ASSET_CACHE = {}
 
 
-def _preprocess_image(image):
+def preprocess_image(image):
     """Splits a 4-channel PNG into RGB color and float32 alpha mask.
     Using float32 instead of float64 is faster on most CPUs/GPUs.
     """
@@ -68,9 +68,9 @@ def preload_all_assets():
 
         # Pre-split into color + mask so rendering is instant
         ASSET_CACHE[name] = {
-            "fruit":  _preprocess_image(fruit_img),
-            "slice":  _preprocess_image(slice_img),
-            "splash": _preprocess_image(splash_img),
+            "fruit":  preprocess_image(fruit_img),
+            "slice":  preprocess_image(slice_img),
+            "splash": preprocess_image(splash_img),
         }
 
 
@@ -101,10 +101,10 @@ class Fruit:
 
         # Fruit movement speed
         self.speed_x = float(random.randint(-3, 3))
-        self.speed_y = float(random.randint(-22, -18))
+        self.speed_y = float(random.randint(-24, -21))
 
         # Gravity force
-        self.gravity = 0.5
+        self.gravity = 0.4
 
         # Fruit state
         self.sliced = False
